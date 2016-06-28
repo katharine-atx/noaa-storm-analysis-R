@@ -1,5 +1,5 @@
 ---
-title: "noaa_storm_analysis"
+title: "NOAA: Most Destructive Weather Events, 2000-2011"
 author: "Katharine Rovinsky"
 date: "June 28, 2016"
 output: html_document
@@ -9,22 +9,112 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
+**Synopsis:**
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+This analysis provides a high-level summary of the health impact and economic impact of storm events in the United States using the National Oceanic and Atmospheric Administration's (NOAA) storm database. The database tracks characteristics of major storms and weather events in the United States, including when and where they occur, as well as estimates of any fatalities, injuries, and property damage from 1950 through November 2011. Here we've focused on the period 2000-2011 to understand which types of storm events have been most detructive in recent years. Results for 2000-2011 show that tornados are far and away the most destructive event type in terms of total casualties, including recorded injuries and fatalities. Flooding has caused the greatest economic damage, including recorded losses for property and crops.
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+A suggested step for further historical analysis would be to bucket the nearly 900 event types to account for historical changes in record-keeping, i.e. "cold weather" v. "record cold". 
 
-```{r cars}
-summary(cars)
+**Data Processing:**
+
+R session information:
+```{r}
+sessionInfo()
 ```
 
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+Downloading the NOAA storm database...
+```{r}
+url = "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+connection = tempfile()
+download.file(url, connection)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+Reading the .csv database... We'll be looking at health impact and economic impact by storm event type. So let's treat event type as a category and standardize for capitalization.
+```{r}
+stormData = read.csv(connection, header = TRUE, stringsAsFactors = FALSE, na.strings = "")
+stormData$Event = as.factor(tolower(stormData$EVTYPE))
+unlink(connection)
+```
+
+Previewing database contents... We have approximately 900 event types.
+```{r}
+str(stormData)
+```
+
+Creating a "decade" field from the date (50s, 60s, 70s, 80s, 90s, 2000-2011)...
+```{r}
+stormData$year = as.numeric(format(as.Date(stormData$BGN_DATE, "%m/%d/%Y "), "%Y"))
+stormData$decade = as.character(stormData$year-(stormData$year %% 10))
+stormData$decade = paste(stormData$decade,"'s", sep = "")
+stormData$decade[stormData$decade=="2010's"|stormData$decade=="2000's"] = "2000-2011"
+stormData$decade = as.factor(stormData$decade)
+```                                 
+
+Count of NOAA storm event records by decade:
+```{r}
+summary(stormData$decade)
+```
+
+From the data preview, we can see that there are over 900 types of events. Here are the top 5 event types for casualties (2000-2011), found by summing and ranking the count of injuries and fatalities across event types.
+```{r}
+stormData2000 = stormData[stormData$decade == "2000-2011",]
+stormData2000$casualties = with(stormData2000, FATALITIES + INJURIES)
+casualties = with(stormData2000, tapply(casualties, Event, sum))
+casualtiesDF <- data.frame(Event = names(casualties), casualties = casualties)
+healthTop5 = names(head(sort(casualtiesDF$casualties, decreasing = TRUE), n=5))
+healthTop5
+```
+
+Here are the top 5 event types for economic impact (2000-2011), found by converting the "k", "m" and "b" indicators to relative dollars and summing crop and property damage estimates  across event types. 
+```{r}
+# Calculating the property and crop damage estimates...
+stormData2000$PROPDMGEXP = tolower(stormData2000$PROPDMGEXP)
+stormData2000$CROPDMGEXP = tolower(stormData2000$CROPDMGEXP)
+stormData2000$PROPDMGEXP = sub("k", 1, stormData2000$PROPDMGEXP)
+stormData2000$PROPDMGEXP = sub("m", 1000, stormData2000$PROPDMGEXP)
+stormData2000$PROPDMGEXP = sub("b", 1000000, stormData2000$PROPDMGEXP)
+stormData2000$CROPDMGEXP = sub("k", 1, stormData2000$CROPDMGEXP)
+stormData2000$CROPDMGEXP = sub("m", 1000, stormData2000$CROPDMGEXP)
+stormData2000$CROPDMGEXP = sub("b", 1000000, stormData2000$CROPDMGEXP)
+stormData2000$propDamage = with(stormData2000, PROPDMG * as.numeric(PROPDMGEXP))
+stormData2000$cropDamage = with(stormData2000, CROPDMG * as.numeric(CROPDMGEXP))
+
+# Summing the damages across event types...
+cropDamage = with(stormData2000, tapply(cropDamage, Event, sum, na.rm = TRUE))
+propDamage = with(stormData2000, tapply(propDamage, Event, sum, na.rm = TRUE))
+damage = cropDamage + propDamage
+damageDF <- data.frame(Event = names(damage), damage = damage)
+econTop5 = names(head(sort(damageDF$damage, decreasing = TRUE), n=5))
+
+#Top 5 most economically destructive event types...
+econTop5
+```
+
+**Results:**
+
+Health impact:
+```{r}
+health = stormData2000[stormData2000$Event %in% healthTop5,]
+healthSum = head(sort(with(health, tapply(casualties, Event, sum))), n=5)
+barplot(healthSum, main="Storm Events with Greatest Casualties, 2000-2011", ylab="Total Casualties (fatalities + injuries)", col = "darkblue")
+```
+From 2000-2011, tornados were far and away the most destructive weather events in terms of human casualties (fatalities + injuries), followed by excessive heat, lightning and thunderstorm winds.
+
+
+Economic impact:
+```{r}
+econ = stormData2000[stormData2000$Event %in% econTop5,]
+propSum = with(econ, tapply(propDamage, Event, sum, na.rm = TRUE))
+cropSum = with(econ, tapply(cropDamage, Event, sum, na.rm = TRUE))
+damageDF = data.frame(names(cropSum), damage = (cropSum + propSum)/1000)
+econSum = head(sort(damageDF$damage, decreasing = TRUE), n=5)
+barplot(econSum, main="Storm Events with Greatest $ Damages, 2000-2011", ylab="$Million's in damage to property and crops", col = "darkblue")
+```
+Flood events caused the greatest estimated economic damage in the 2000-2011 period, followed by hurricanes, storm surges, tornados and hail.
+
+
+
+
+For additional data notes, refer to the NOAA database documentation:
+- [Database documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf)
+- [Database FAQs](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf)
